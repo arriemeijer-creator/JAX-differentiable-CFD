@@ -2,12 +2,14 @@
 
 A Fully Differentiable Hybrid Navier–Stokes Framework with Multi-Scale Neural Correction, Latent-Space Acceleration, and Differentiable Inverse Design
 
-![von_karman_VS.mp4](von_karman_VS.mp4)
-
 ![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)
 ![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![JAX: 0.4+](https://img.shields.io/badge/JAX-0.4+-green.svg)
 ![PyQt6: 6.0+](https://img.shields.io/badge/PyQt6-6.0+-orange.svg)
+
+![image.png](image.png)
+
+![von_karman_VS.mp4](von_karman_VS.mp4)
 
 ## Overview
 
