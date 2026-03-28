@@ -8,6 +8,8 @@
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.0+-orange.svg)](https://www.riverbankcomputing.com/software/pyqt/)
 [![Tests](https://img.shields.io/badge/Tests-1%2C680%20configs-brightgreen.svg)](https://github.com/arnomeijer/differential-cfd)
 
+![GUI.png](GUI.png)
+
 ![image.png](image.png)
 
 ---
