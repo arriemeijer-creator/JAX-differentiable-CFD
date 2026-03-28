@@ -525,6 +525,11 @@ class BaselineViewer(QMainWindow):
             dx = self.solver.grid.dx
             dy = self.solver.grid.dy
             
+            # Validate grid parameters match input arrays
+            if nx != self.solver.grid.nx or ny != self.solver.grid.ny:
+                print(f"Grid mismatch in streamlines: input {u.shape} vs solver grid {self.solver.grid.nx}x{self.solver.grid.ny}")
+                return np.zeros_like(u)
+            
             # Use cumulative sum for vectorized integration
             # ψ[i,j] = ∫ u dy - ∫ v dx (approximated)
             
@@ -823,16 +828,18 @@ class BaselineViewer(QMainWindow):
         # Get grid parameters from selection
         new_grid = self.get_grid_params_from_selection(selected_grid, selected_flow)
         
-        # Update solver with new grid and flow type
-        self.solver.sim_params.flow_type = selected_flow
+        # Use the solver's apply_flow_type method first to handle flow-specific setup
+        self.solver.apply_flow_type(selected_flow)
+        
+        # Then override with custom grid selection
         self.solver.grid = new_grid
         
-        # Recreate grid coordinates
+        # Recreate grid coordinates with custom grid
         x = jnp.linspace(0, self.solver.grid.lx, self.solver.grid.nx)
         y = jnp.linspace(0, self.solver.grid.ly, self.solver.grid.ny)
         self.solver.grid.X, self.solver.grid.Y = jnp.meshgrid(x, y, indexing='ij')
         
-        # Reinitialize the flow
+        # Reinitialize the flow with custom grid
         if selected_flow == 'lid_driven_cavity':
             self.solver._initialize_cavity_flow()
         elif selected_flow == 'channel_flow':
@@ -844,7 +851,11 @@ class BaselineViewer(QMainWindow):
         else:  # von_karman
             self.solver._initialize_von_karman_flow()
         
-        # Recompile JIT functions
+        # Recompute mask for new grid
+        self.solver.mask = self.solver._compute_mask()
+        
+        # Clear JAX cache and recompile JIT functions
+        jax.clear_caches()
         self.solver._step_jit = jax.jit(self.solver._step)
         
         # Reset history
@@ -857,6 +868,9 @@ class BaselineViewer(QMainWindow):
         # Check if grid size changed
         new_nx, new_ny = self.solver.grid.nx, self.solver.grid.ny
         if old_nx != new_nx or old_ny != new_ny:
+            # Clear cached streamlines when grid changes
+            if hasattr(self, 'cached_streamlines'):
+                self.cached_streamlines = None
             # Update plots for new grid size
             self.update_plots_for_new_grid()
         
@@ -872,6 +886,10 @@ class BaselineViewer(QMainWindow):
         lx, ly = self.solver.grid.lx, self.solver.grid.ly
         
         print(f"Updating plots for new grid: {nx}x{ny}, domain: {lx}x{ly}")
+        
+        # Clear cached streamlines to prevent shape mismatch
+        if hasattr(self, 'cached_streamlines'):
+            self.cached_streamlines = None
         
         # Clear and recreate plots completely
         self.plot_widget.clear()
@@ -1072,6 +1090,12 @@ class BaselineViewer(QMainWindow):
             u_np = v_np = vort_np = None
             vel_mag = None
             
+            # Check if velocity fields match current grid shape
+            current_nx, current_ny = self.solver.grid.nx, self.solver.grid.ny
+            if u.shape != (current_nx, current_ny):
+                print(f"Velocity shape mismatch: u.shape {u.shape} vs grid {(current_nx, current_ny)}")
+                return  # Skip this frame, wait for solver to catch up
+            
             if self.show_velocity:
                 u_np = np.array(u)
                 v_np = np.array(v)
@@ -1116,6 +1140,19 @@ class BaselineViewer(QMainWindow):
                     except Exception as e:
                         print(f"Streamlines error: {e}")
                 elif self.show_streamlines and hasattr(self, 'cached_streamlines') and self.cached_streamlines is not None and self.stream_img is not None:
+                    # Check if cached streamlines match current grid shape
+                    if self.cached_streamlines.shape != u_np.shape:
+                        print(f"Streamlines shape mismatch: cached {self.cached_streamlines.shape} vs current {u_np.shape}")
+                        self.cached_streamlines = None  # Clear cache
+                        return  # Skip this frame, recompute next time
+                    
+                    # Additional safety check: verify cached streamlines match solver grid
+                    if (self.cached_streamlines.shape[0] != self.solver.grid.nx or 
+                        self.cached_streamlines.shape[1] != self.solver.grid.ny):
+                        print(f"Streamlines grid mismatch: cached {self.cached_streamlines.shape} vs solver grid {self.solver.grid.nx}x{self.solver.grid.ny}")
+                        self.cached_streamlines = None  # Clear cache
+                        return  # Skip this frame, recompute next time
+                    
                     # Use cached streamlines most of the time
                     if self._frame_counter % 20 == 0:  # Debug every 20 frames
                         print(f"Using cached streamlines at frame {self._frame_counter}, shape: {self.cached_streamlines.shape}")
@@ -1233,7 +1270,9 @@ class BaselineViewer(QMainWindow):
                 self.capture_frame()
             
         except Exception as e:
+            import traceback
             print(f"Update error: {e}")
+            print(f"Full traceback: {traceback.format_exc()}")
             if hasattr(self, 'info_label') and self.info_label is not None:
                 self.info_label.setText(f"Error: {str(e)[:50]}...")
     

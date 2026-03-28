@@ -581,6 +581,9 @@ class BaselineSolver:
         # Recompile JIT functions
         self._step_jit = jax.jit(self._step)
         
+        # Update pre-computed mask for new grid size
+        self.mask = self._compute_mask()
+        
         # Reset history with all required keys including 'dt'
         self.history = {'time': [], 'ke': [], 'enstrophy': [], 'drag': [], 'lift': [], 'dt': []}
         self.iteration = 0
