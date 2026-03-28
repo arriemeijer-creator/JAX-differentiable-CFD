@@ -10,9 +10,7 @@
 
 ![GUI.png](GUI.png)
 
-![1VKVS.png](1VKVS.png)
-![2LDC.png](2LDC.png) ![4TGV.png](4TGV.png)
-![3CF.png](3CF.png)
+![flow_types.png](flow_types.png)
 
 ---
 
