@@ -320,43 +320,58 @@ All operators are implemented in JAX and fully differentiable.
 | **pyqtgraph** | ≥0.13.0 | Real-time visualization |
 | **pillow** | ≥9.0.0 | Video recording |
 
-Documentation
-Full design documentation is in docs/framework.pdf (70+ pages). It covers:
+## Documentation
 
-Part I: Differentiable hybrid Navier-Stokes solver
+Full design documentation is in `docs/A Differential JAX-Orchestrated Incompressible Flow Simulation Framework - Arno Meijer.pdf` (70+ pages). It covers:
 
-Part II: Active flow control and neural flow management
+### Part I: Differentiable Hybrid Navier-Stokes Solver
 
-Part III: Reinforcement-driven optimization
+### Part II: Active Flow Control and Neural Flow Management
 
-Appendices on theory, implementation, transition plans, and mitigation strategies
+### Part III: Reinforcement-Driven Optimization
+
+### Appendices
+
+- Theory, implementation, transition plans, and mitigation strategies
 
 The PDF describes the complete vision. This README describes what actually works right now.
 
-Contributing
-Contributions welcome, especially in these areas:
+## Contributing
 
-Neural operators (pressure, turbulence, dynamics)
+Contributions are welcome, especially in these areas:
 
-New flow types (airfoil, Rayleigh-Bénard, etc.)
-
-3D extension
-
-Optimization loops
+- **Neural operators** (pressure, turbulence, dynamics)
+- **New flow types** (airfoil, Rayleigh-Bénard, etc.)
+- **3D extension**
+- **Optimization loops**
 
 Open an issue or submit a PR.
 
-License
-LGPL v3. See LICENSE file.
+## License
 
-Author
-Arno Meijer
+This project is licensed under **GNU Lesser General Public License v3.0**. See the [LICENSE](LICENSE) file for details.
 
-Citation
-bibtex
+This license allows:
+- ✅ Free use for academic and commercial purposes
+- ✅ Modification and redistribution
+- ✅ Linking with proprietary code (under conditions)
+- ❌ Not responsible for any damages
+
+## Author
+
+**Arno Meijer**  
+Mechanical Engineer | CFD-ML Researcher | HVAC Innovator  
+Independent Researcher, Differential CFD-ML
+
+## Citation
+
+If you use this framework in your research, please cite:
+
+```bibtex
 @misc{meijer2026differentialcfd,
-  author = {Meijer, Arno},
-  title = {Differential CFD-ML},
-  year = {2026},
-  url = {https://github.com/arnomeijer/differential-cfd}
+   author = {Meijer, Arno},
+   title = {Differential CFD-ML},
+   year = {2026},
+   url = {https://github.com/arnomeijer/differential-cfd}
 }
+```
