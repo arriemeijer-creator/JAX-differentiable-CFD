@@ -7,6 +7,8 @@
 [![JAX](https://img.shields.io/badge/JAX-0.4+-green.svg)](https://github.com/google/jax)
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.0+-orange.svg)](https://www.riverbankcomputing.com/software/pyqt/)
 
+![0329.gif](0329.gif)
+
 ![GUI.png](GUI.png)
 
 ![flow_types.png](flow_types.png)
