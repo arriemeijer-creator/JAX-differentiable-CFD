@@ -53,7 +53,7 @@ class FlowVisualization:
         self.vort_plot = None
         self.pressure_plot = None
         self.upscale_factor = 1  # Default upscale factor for smooth visualization (1x = no upscaling)
-        # CL and CD plots removed for stability
+        # CL plot removed for stability, CD plot added for live visualization
         self.cl_plot = None
         self.cd_plot = None
         self.l2_plot = None  # Add L2 error plot
@@ -282,22 +282,22 @@ class FlowVisualization:
             if hasattr(self, 'plot_widget') and self.plot_widget is not None:
                 self.plot_widget.clear()
         
-        # Row 0: Velocity (spans 2 columns by default, 1 when divergence is visible) | Divergence (right)
+        # Row 0: Velocity (spans 2 columns) | Divergence (hidden)
         self.vel_plot = self.plot_widget.addPlot(title="Velocity Magnitude", row=0, col=0, colspan=2)
         self.vel_plot.setLabel('left', 'y')
         self.vel_plot.setLabel('bottom', 'x')
 
-        self.div_plot = self.plot_widget.addPlot(title="Divergence", row=0, col=1, colspan=1)
+        self.div_plot = self.plot_widget.addPlot(title="Divergence", row=0, col=2, colspan=1)
         self.div_plot.setLabel('left', 'y')
         self.div_plot.setLabel('bottom', 'x')
         self.div_plot.setVisible(False)  # Hidden by default
 
-        # Row 1: Vorticity (spans 2 columns by default, 1 when pressure is visible) | Pressure (right)
+        # Row 1: Vorticity (spans 2 columns) | Pressure (hidden)
         self.vort_plot = self.plot_widget.addPlot(title="Vorticity", row=1, col=0, colspan=2)
         self.vort_plot.setLabel('left', 'y')
         self.vort_plot.setLabel('bottom', 'x')
 
-        self.pressure_plot = self.plot_widget.addPlot(title="Pressure", row=1, col=1, colspan=1)
+        self.pressure_plot = self.plot_widget.addPlot(title="Pressure", row=1, col=2, colspan=1)
         self.pressure_plot.setLabel('left', 'y')
         self.pressure_plot.setLabel('bottom', 'x')
         self.pressure_plot.setVisible(False)  # Hidden by default
@@ -307,6 +307,7 @@ class FlowVisualization:
         self.scalar_plot = self.plot_widget.addPlot(title="Dye Concentration", row=2, col=0, colspan=1)
         self.scalar_plot.setLabel('left', 'y')
         self.scalar_plot.setLabel('bottom', 'x')
+        self.scalar_plot.setVisible(False)  # Hidden by default
         self.scalar_img = pg.ImageItem()
         self.scalar_img.setLevels([0, 1])  # Set levels immediately to prevent float input type error
         self.scalar_plot.addItem(self.scalar_img)
@@ -350,9 +351,17 @@ class FlowVisualization:
         self.l2_plot = self.plot_widget.addPlot(title="Error Metrics", row=2, col=1, colspan=1)
         self.l2_plot.setLabel('left', 'Error')
         self.l2_plot.setLabel('bottom', 'Time')
+        self.l2_plot.setVisible(False)  # Hidden by default
         self.l2_plot.showGrid(x=True, y=True)
         self.l2_plot.setLogMode(y=True)  # Log scale for better visualization
         self.l2_plot.setXRange(0, 1)  # Start with range from 0, will expand as data grows
+
+        # Row 3: Cd plot (spans 2 columns) - below dye/error plots
+        self.cd_plot = self.plot_widget.addPlot(title="Drag Coefficient (Cd)", row=3, col=0, colspan=2)
+        self.cd_plot.setLabel('left', 'Cd (normalized)')
+        self.cd_plot.setLabel('bottom', 'Time')
+        self.cd_plot.showGrid(x=True, y=True)
+        self.cd_plot.setVisible(True)  # Make visible by default
 
         # Add error legend positioned on the RIGHT side
         legend = self.l2_plot.addLegend(offset=(-10, 10))  # 10px from right, 10px from top
@@ -374,6 +383,13 @@ class FlowVisualization:
         self.l2_v_errors = []
         self.rms_change_errors = []
         self.change_99p_errors = []
+        
+        # Initialize Cd tracking arrays and curve
+        self.cd_curve = None
+        self.cd_times = []
+        self.cd_values = []
+        self.cd_normalized_values = []
+        self.cd_initial_value = None  # For normalization to 1
         
         # FPS tracking
         self.current_sim_fps = 0.0
@@ -601,6 +617,10 @@ class FlowVisualization:
             plot.hideButtons()
             plot.enableAutoRange(False)
             plot.setAutoVisible(y=False)
+
+        # Configure Cd plot separately to enable autofit
+        self.cd_plot.hideButtons()
+        self.cd_plot.enableAutoRange(True)
 
         # Add cursor callout functionality
         self._setup_cursor_callouts()
@@ -958,25 +978,50 @@ class FlowVisualization:
             from PyQt6.QtWidgets import QGraphicsPolygonItem
             from PyQt6.QtGui import QPolygonF, QBrush, QColor
             from PyQt6.QtCore import QPointF
+            from PyQt6 import sip
             
-            # Create filled polygon items for obstacle mask
-            self.vel_outline = QGraphicsPolygonItem()
+            # Remove existing outline items to prevent duplication when grid changes
+            outline_items = [
+                ('vel_outline', 'vel_plot'),
+                ('div_outline', 'div_plot'), 
+                ('vort_outline', 'vort_plot'),
+                ('scalar_outline', 'scalar_plot'),
+                ('pressure_outline', 'pressure_plot')
+            ]
+            
+            for outline_attr, plot_attr in outline_items:
+                if hasattr(self, outline_attr):
+                    outline_item = getattr(self, outline_attr)
+                    if outline_item is not None and not sip.isdeleted(outline_item):
+                        # Remove from plot first
+                        if hasattr(self, plot_attr):
+                            plot = getattr(self, plot_attr)
+                            if plot is not None and outline_item in plot.items:
+                                plot.removeItem(outline_item)
+                        # Delete the item
+                        sip.delete(outline_item)
+                    # Set to None
+                    setattr(self, outline_attr, None)
+            
+            # Create path items for obstacle mask (supports multiple disconnected buildings)
+            from PyQt6.QtWidgets import QGraphicsPathItem
+            self.vel_outline = QGraphicsPathItem()
             self.vel_outline.setBrush(QBrush(QColor(200, 200, 200, 255)))  # Light grey for velocity plot
             self.vel_outline.setPen(pg.mkPen('k', width=1))
 
-            self.div_outline = QGraphicsPolygonItem()
+            self.div_outline = QGraphicsPathItem()
             self.div_outline.setBrush(QBrush(QColor(0, 0, 0, 255)))  # Black with full opacity
             self.div_outline.setPen(pg.mkPen('k', width=1))
 
-            self.vort_outline = QGraphicsPolygonItem()
+            self.vort_outline = QGraphicsPathItem()
             self.vort_outline.setBrush(QBrush(QColor(0, 0, 0, 255)))  # Black with full opacity
             self.vort_outline.setPen(pg.mkPen('k', width=1))
 
-            self.scalar_outline = QGraphicsPolygonItem()
+            self.scalar_outline = QGraphicsPathItem()
             self.scalar_outline.setBrush(QBrush(QColor(0, 0, 0, 255)))  # Black with full opacity
             self.scalar_outline.setPen(pg.mkPen('k', width=1))
 
-            self.pressure_outline = QGraphicsPolygonItem()
+            self.pressure_outline = QGraphicsPathItem()
             self.pressure_outline.setBrush(QBrush(QColor(0, 0, 0, 255)))  # Black with full opacity
             self.pressure_outline.setPen(pg.mkPen('k', width=1))
 
@@ -984,18 +1029,23 @@ class FlowVisualization:
             if hasattr(self, 'vel_plot') and self.vel_plot is not None:
                 self.vel_plot.addItem(self.vel_outline)
                 self.vel_outline.setVisible(True)
+                self.vel_outline.setZValue(1000)  # Ensure on top
             if hasattr(self, 'div_plot') and self.div_plot is not None:
                 self.div_plot.addItem(self.div_outline)
                 self.div_outline.setVisible(True)
+                self.div_outline.setZValue(1000)  # Ensure on top
             if hasattr(self, 'vort_plot') and self.vort_plot is not None:
                 self.vort_plot.addItem(self.vort_outline)
                 self.vort_outline.setVisible(True)
+                self.vort_outline.setZValue(1000)  # Ensure on top
             if hasattr(self, 'scalar_plot') and self.scalar_plot is not None:
                 self.scalar_plot.addItem(self.scalar_outline)
                 self.scalar_outline.setVisible(True)
+                self.scalar_outline.setZValue(1000)  # Ensure on top
             if hasattr(self, 'pressure_plot') and self.pressure_plot is not None:
                 self.pressure_plot.addItem(self.pressure_outline)
                 self.pressure_outline.setVisible(True)
+                self.pressure_outline.setZValue(1000)  # Ensure on top
 
         except Exception as e:
             print(f"Warning: Failed to create outline items: {e}")
@@ -1832,8 +1882,41 @@ class FlowVisualization:
             self.quiver_items.clear()
     
     def update_coefficients(self, cl_value: float, cd_value: float, time_value: float) -> None:
-        """Coefficient plots removed - no implementation needed"""
-        pass
+        """Update Cd plot with normalized drag coefficient"""
+        if self.cd_plot is None:
+            print(f"DEBUG: Cd plot is None, skipping update")
+            return
+        
+        print(f"DEBUG: Updating Cd plot: cd_value={cd_value:.6f}, time={time_value:.6f}")
+        
+        # Store Cd value
+        self.cd_times.append(time_value)
+        self.cd_values.append(cd_value)
+        
+        # Normalize to initial value (first non-zero Cd value)
+        if self.cd_initial_value is None and cd_value > 0:
+            self.cd_initial_value = cd_value
+        
+        if self.cd_initial_value is not None and self.cd_initial_value > 0:
+            normalized_cd = cd_value / self.cd_initial_value
+        else:
+            normalized_cd = cd_value  # Fallback if no initial value yet
+        
+        self.cd_normalized_values.append(normalized_cd)
+        
+        # Create curve if it doesn't exist
+        if self.cd_curve is None:
+            self.cd_curve = self.cd_plot.plot(pen=pg.mkPen('c', width=2))
+        
+        # Update curve data
+        self.cd_curve.setData(self.cd_times, self.cd_normalized_values)
+        
+        # Auto-expand x-range as data grows
+        if len(self.cd_times) > 0:
+            max_time = max(self.cd_times)
+            current_x_range = self.cd_plot.viewRange()[0]
+            if max_time > current_x_range[1]:
+                self.cd_plot.setXRange(0, max_time * 1.1)
 
     def clear_error_plot(self) -> None:
         """Clear error plot curves"""

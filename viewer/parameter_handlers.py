@@ -537,6 +537,25 @@ class ParameterHandlers:
                     chord_percentage = 0.15  # 15% of domain width
                     self.solver.sim_params.naca_chord = chord_percentage * grid_lx
             
+            # If obstacle type is urban_map, clear old SDF data since grid shape changed
+            if getattr(self.solver.sim_params, 'obstacle_type', None) == 'urban_map':
+                if hasattr(self.solver.sim_params, 'sdf_field'):
+                    delattr(self.solver.sim_params, 'sdf_field')
+                if hasattr(self.solver.sim_params, 'individual_sdfs'):
+                    delattr(self.solver.sim_params, 'individual_sdfs')
+                if hasattr(self.solver.sim_params, 'urban_map_polygons'):
+                    delattr(self.solver.sim_params, 'urban_map_polygons')
+                print("Grid changed: cleared old urban_map SDF data (reload GeoJSON for new grid)")
+            
+            # If obstacle type is custom (PNG mask), clear old SDF data temporarily
+            # It will be re-sampled after the grid is fully updated
+            if getattr(self.solver.sim_params, 'obstacle_type', None) == 'custom':
+                if hasattr(self.solver.sim_params, 'sdf_field'):
+                    delattr(self.solver.sim_params, 'sdf_field')
+                if hasattr(self.solver.sim_params, 'custom_mask'):
+                    delattr(self.solver.sim_params, 'custom_mask')
+                print("Grid changed: clearing old custom SDF data for re-sampling")
+            
             # Recreate mask AFTER updating obstacle positions
             self.solver.mask = self.solver._compute_mask()
             
@@ -586,6 +605,14 @@ class ParameterHandlers:
                 import traceback
                 traceback.print_exc()
             
+            # Update VK validator and overlay when grid changes
+            if hasattr(self, 'vk_validator') and self.vk_validator is not None:
+                dx = grid_lx / grid_nx
+                dy = grid_ly / grid_ny
+                self.vk_validator.update_grid_dimensions(grid_nx, grid_ny, dx, dy)
+            if hasattr(self, 'vk_overlay') and self.vk_overlay is not None:
+                self.vk_overlay.update_domain_bounds(0.0, grid_lx, 0.0, grid_ly)
+            
             # Update simulation controller shared buffers for new grid size
             try:
                 self.sim_controller.update_grid_size(grid_nx, grid_ny)
@@ -598,6 +625,21 @@ class ParameterHandlers:
             # Update NACA chord range based on new domain size
             max_chord = min(grid_lx * 0.5, grid_ly * 0.6, 5.0)  # Max 50% of width, 60% of height, or 5.0
             self.control_panel.set_chord_range_for_domain(max_chord)
+            
+            # Re-sample PNG mask after grid is fully updated
+            if getattr(self.solver.sim_params, 'obstacle_type', None) == 'custom':
+                if hasattr(self.solver.sim_params, 'png_original_image'):
+                    if hasattr(self.control_panel, 'obstacle_controls'):
+                        try:
+                            resampled = self.control_panel.obstacle_controls._resample_png_mask(self)
+                            if resampled:
+                                print("Grid changed: re-sampled PNG mask to new grid size")
+                            else:
+                                print("Grid changed: failed to re-sample PNG mask")
+                        except Exception as e:
+                            print(f"Grid changed: error re-sampling PNG mask: {e}")
+                            import traceback
+                            traceback.print_exc()
             
             # ULTRA-CONSERVATIVE: Minimal initialization to prevent any crashes
             try:
@@ -688,6 +730,56 @@ class ParameterHandlers:
             
         except Exception as e:
             print(f"Error updating cylinder radius: {e}")
+            self.control_panel.start_btn.setEnabled(True)
+            self.control_panel.pause_btn.setEnabled(False)
+    
+    def update_bc_mode(self) -> None:
+        """Update LBM boundary condition mode (supply or extract)."""
+        self.refresh_timer.stop()
+        self.sim_controller.stop_simulation()
+        
+        try:
+            # Get new BC mode from UI
+            new_bc_mode = self.control_panel.bc_mode_combo.currentData()
+            
+            # Only apply if LBM solver
+            if hasattr(self.solver, 'lbm_params'):
+                # Update BC mode in LBM parameters
+                self.solver.lbm_params.bc_mode = new_bc_mode
+                
+                # Clear JIT cache since BC mode changed
+                if hasattr(self.solver, '_jit_cache'):
+                    self.solver._jit_cache = {}
+                
+                # Recompile step function with new BC mode
+                self.solver._step_jit = self.solver.get_step_jit()
+                
+                # Reinitialize flow if needed
+                if hasattr(self.solver, '_initialize_flow'):
+                    self.solver._initialize_flow()
+                    from lbm.collision import equilibrium
+                    self.solver.f = equilibrium(self.solver.rho, self.solver.u, self.solver.v, 
+                                              self.solver.lattice.get_cx(), self.solver.lattice.get_cy(),
+                                              self.solver.lattice.w, self.solver.lattice.cs_squared)
+                
+                # Reset iteration
+                self.solver.iteration = 0
+                
+                logger.info(f"BC mode updated to {new_bc_mode}")
+                if new_bc_mode == 'supply':
+                    logger.info("Flow: Supply on left, outlet on right (L→R)")
+                else:
+                    logger.info("Flow: Supply on right, outlet on left (R→L)")
+            else:
+                logger.warning("BC mode only applies to LBM solver")
+            
+            self.control_panel.start_btn.setEnabled(True)
+            self.control_panel.pause_btn.setEnabled(False)
+            
+        except Exception as e:
+            logger.error(f"Error updating BC mode: {e}")
+            import traceback
+            traceback.print_exc()
             self.control_panel.start_btn.setEnabled(True)
             self.control_panel.pause_btn.setEnabled(False)
     
@@ -1016,9 +1108,17 @@ class ParameterHandlers:
             # Clear any existing JIT compilations
             if hasattr(self.solver, '_step_jit'):
                 delattr(self.solver, '_step_jit')
+            if hasattr(self.solver, '_jit_cache'):
+                self.solver._jit_cache = {}
             
             # Update timestep
-            self.solver.set_fixed_dt(new_dt)
+            if hasattr(self.solver, 'set_fixed_dt'):
+                # NS solver
+                self.solver.set_fixed_dt(new_dt)
+            else:
+                # LBM solver: directly set dt attribute
+                self.solver.dt = new_dt
+            
             self.control_panel.dt_spinbox.setValue(self.solver.dt)
             self.control_panel.adaptive_dt_checkbox.setChecked(False)
             
@@ -1064,6 +1164,52 @@ class ParameterHandlers:
         # Update simulation params
         current_sim_params.solver_type = solver_type
         
+        # Hide mask overlay when switching to LBM solver
+        if solver_type == 'lattice_boltzmann':
+            if hasattr(self.control_panel, 'obstacle_controls') and self.control_panel.obstacle_controls:
+                if hasattr(self.control_panel.obstacle_controls, 'show_outline_checkbox'):
+                    self.control_panel.obstacle_controls.show_outline_checkbox.setChecked(False)
+                    print("Mask overlay disabled for LBM solver")
+            
+            # Explicitly hide all outline items and clear their paths
+            if hasattr(self, 'obstacle_renderer') and self.obstacle_renderer:
+                self.obstacle_renderer.show_outlines = False
+                
+                from PyQt6.QtGui import QPainterPath
+                from PyQt6.QtCore import QPointF
+                empty_path = QPainterPath()
+                
+                try:
+                    if self.obstacle_renderer.vel_outline is not None and hasattr(self.obstacle_renderer.vel_outline, 'setPath'):
+                        self.obstacle_renderer.vel_outline.setPath(empty_path)
+                        self.obstacle_renderer.vel_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+                try:
+                    if self.obstacle_renderer.vort_outline is not None and hasattr(self.obstacle_renderer.vort_outline, 'setPath'):
+                        self.obstacle_renderer.vort_outline.setPath(empty_path)
+                        self.obstacle_renderer.vort_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+                try:
+                    if self.obstacle_renderer.div_outline is not None and hasattr(self.obstacle_renderer.div_outline, 'setPath'):
+                        self.obstacle_renderer.div_outline.setPath(empty_path)
+                        self.obstacle_renderer.div_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+                try:
+                    if self.obstacle_renderer.scalar_outline is not None and hasattr(self.obstacle_renderer.scalar_outline, 'setPath'):
+                        self.obstacle_renderer.scalar_outline.setPath(empty_path)
+                        self.obstacle_renderer.scalar_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+                try:
+                    if self.obstacle_renderer.pressure_outline is not None and hasattr(self.obstacle_renderer.pressure_outline, 'setPath'):
+                        self.obstacle_renderer.pressure_outline.setPath(empty_path)
+                        self.obstacle_renderer.pressure_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+        
         try:
             if solver_type == 'lattice_boltzmann':
                 # Create LBM solver
@@ -1075,6 +1221,9 @@ class ParameterHandlers:
                     sim_params=current_sim_params,
                     dt=current_dt
                 )
+                # Ensure _step_jit is initialized
+                if not hasattr(new_solver, '_step_jit') or new_solver._step_jit is None:
+                    new_solver._step_jit = new_solver.get_step_jit()
                 print("Created LBM solver")
             else:
                 # Create Navier-Stokes solver
@@ -1103,9 +1252,48 @@ class ParameterHandlers:
             if hasattr(self, 'obstacle_renderer'):
                 self.obstacle_renderer.update_obstacle_outlines(self.solver, force_update=True)
             
+            # For LBM, ensure outlines remain hidden after update
+            if solver_type == 'lattice_boltzmann' and hasattr(self, 'obstacle_renderer') and self.obstacle_renderer:
+                from PyQt6.QtGui import QPainterPath
+                empty_path = QPainterPath()
+                try:
+                    if self.obstacle_renderer.vel_outline is not None and hasattr(self.obstacle_renderer.vel_outline, 'setPath'):
+                        self.obstacle_renderer.vel_outline.setPath(empty_path)
+                        self.obstacle_renderer.vel_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+                try:
+                    if self.obstacle_renderer.vort_outline is not None and hasattr(self.obstacle_renderer.vort_outline, 'setPath'):
+                        self.obstacle_renderer.vort_outline.setPath(empty_path)
+                        self.obstacle_renderer.vort_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+                try:
+                    if self.obstacle_renderer.div_outline is not None and hasattr(self.obstacle_renderer.div_outline, 'setPath'):
+                        self.obstacle_renderer.div_outline.setPath(empty_path)
+                        self.obstacle_renderer.div_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+                try:
+                    if self.obstacle_renderer.scalar_outline is not None and hasattr(self.obstacle_renderer.scalar_outline, 'setPath'):
+                        self.obstacle_renderer.scalar_outline.setPath(empty_path)
+                        self.obstacle_renderer.scalar_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+                try:
+                    if self.obstacle_renderer.pressure_outline is not None and hasattr(self.obstacle_renderer.pressure_outline, 'setPath'):
+                        self.obstacle_renderer.pressure_outline.setPath(empty_path)
+                        self.obstacle_renderer.pressure_outline.setVisible(False)
+                except RuntimeError:
+                    pass
+            
             # Clear JAX caches
             jax.clear_caches()
             gc.collect()
+            
+            # Synchronize Tau slider if switching to LBM
+            if solver_type == 'lattice_boltzmann':
+                self.sync_tau_slider()
             
             print(f"Successfully switched to {solver_type} solver")
             
@@ -1124,3 +1312,142 @@ class ParameterHandlers:
         # This prevents background simulation when changing solver type
         self.control_panel.start_btn.setEnabled(True)
         self.control_panel.pause_btn.setEnabled(False)
+    
+    def update_tau_value(self) -> None:
+        """Update LBM Tau parameter during simulation."""
+        if not hasattr(self.solver, 'lbm_params'):
+            print("Tau parameter is only available for LBM solver")
+            return
+        
+        # Store current obstacle type to preserve it
+        current_obstacle_type = self.solver.sim_params.obstacle_type
+        
+        # Get new tau value from UI
+        new_tau = self.control_panel.tau_slider.value() / 100.0
+        
+        # Validate tau range for stability
+        if new_tau <= 0.5:
+            print("Error: Tau must be > 0.5 for LBM stability")
+            return
+        if new_tau > 2.0:
+            print("Warning: Tau > 2.0 may cause excessive diffusion")
+        
+        # Update LBM parameters
+        old_tau = self.solver.lbm_params.tau
+        self.solver.lbm_params.tau = new_tau
+        self.solver.lbm_params.omega = 1.0 / new_tau
+        
+        # Recompute viscosity if needed
+        cs_squared = 1.0 / 3.0
+        new_viscosity = cs_squared * (new_tau - 0.5)
+        
+        print(f"LBM Tau updated: {old_tau:.3f} -> {new_tau:.3f}")
+        print(f"New omega: {self.solver.lbm_params.omega:.3f}")
+        print(f"New viscosity: {new_viscosity:.6f}")
+        
+        # Update flow parameters to maintain consistency
+        self.solver.flow.nu = new_viscosity
+        
+        # Recompute Reynolds number if velocity is fixed
+        if hasattr(self.solver.flow, 'U_inf') and hasattr(self.solver.flow, 'L_char'):
+            new_Re = self.solver.flow.U_inf * self.solver.flow.L_char / new_viscosity
+            self.solver.flow.Re = new_Re
+            print(f"Updated Reynolds number: {new_Re:.1f}")
+            
+            # Update UI to reflect new Re
+            self.control_panel.re_input.setValue(int(new_Re))
+            self.control_panel.nu_input.setValue(new_viscosity)
+        
+        # Clear JIT cache to force recompilation with new parameters
+        if hasattr(self.solver, '_step_jit'):
+            delattr(self.solver, '_step_jit')
+        
+        # Recompile step function with new tau
+        try:
+            self.solver._step_jit = self.solver.get_step_jit()
+            print("LBM step function recompiled with new Tau")
+        except Exception as e:
+            print(f"Error recompiling LBM step function: {e}")
+        
+        # Update store state
+        from viewer.state import store, set_reynolds_number, set_nu, set_obstacle_type
+        store.dispatch(set_reynolds_number(self.solver.flow.Re))
+        store.dispatch(set_nu(self.solver.flow.nu))
+        # Restore obstacle type to prevent it from being reset
+        store.dispatch(set_obstacle_type(current_obstacle_type))
+    
+    def sync_tau_slider(self) -> None:
+        """Synchronize Tau slider with current LBM solver parameters."""
+        if not hasattr(self.solver, 'lbm_params'):
+            return
+        
+        current_tau = self.solver.lbm_params.tau
+        slider_value = int(current_tau * 100)  # Convert to slider range
+        self.control_panel.tau_slider.blockSignals(True)
+        self.control_panel.tau_slider.setValue(slider_value)
+        self.control_panel.tau_spinbox.blockSignals(True)
+        self.control_panel.tau_spinbox.setValue(current_tau)
+        self.control_panel.tau_spinbox.blockSignals(False)
+        self.control_panel.tau_slider.blockSignals(False)
+    
+    def apply_kh_parameters(self, parameter_type: str, value: float) -> None:
+        """Apply Kelvin-Helmholtz flow parameters to the solver."""
+        if not hasattr(self.solver, 'sim_params'):
+            print("Error: Solver not initialized")
+            return
+        
+        # Update the appropriate parameter in simulation parameters
+        if not hasattr(self.solver.sim_params, 'kh_strength'):
+            self.solver.sim_params.kh_strength = 1.0
+            self.solver.sim_params.kh_perturbation = 0.01
+            self.solver.sim_params.kh_thickness = 0.1
+        
+        if parameter_type == 'strength':
+            self.solver.sim_params.kh_strength = value
+            print(f"KH strength updated to: {value:.1f}")
+        elif parameter_type == 'perturbation':
+            self.solver.sim_params.kh_perturbation = value
+            print(f"KH perturbation updated to: {value:.3f}")
+        elif parameter_type == 'thickness':
+            self.solver.sim_params.kh_thickness = value
+            print(f"KH thickness updated to: {value:.2f}")
+        else:
+            print(f"Unknown KH parameter type: {parameter_type}")
+            return
+        
+        # Reinitialize flow if currently running Kelvin-Helmholtz simulation
+        if (hasattr(self.solver.sim_params, 'flow_type') and 
+            self.solver.sim_params.flow_type == 'kelvin_helmholtz'):
+            
+            # Stop simulation temporarily
+            was_running = hasattr(self, 'sim_controller') and self.sim_controller.running
+            if was_running:
+                self.sim_controller.stop_simulation()
+            
+            try:
+                # Reinitialize KH flow with new parameters
+                if hasattr(self.solver, 'apply_flow_type'):
+                    self.solver.apply_flow_type('kelvin_helmholtz')
+                elif hasattr(self.solver, '_initialize_kelvin_helmholtz_flow'):
+                    self.solver._initialize_kelvin_helmholtz_flow()
+                
+                # Reset iteration counter
+                self.solver.iteration = 0
+                
+                # Clear JIT cache to force recompilation with new parameters
+                if hasattr(self.solver, '_step_jit'):
+                    delattr(self.solver, '_step_jit')
+                
+                # Recompile step function
+                self.solver._step_jit = self.solver.get_step_jit()
+                
+                print(f"Kelvin-Helmholtz flow reinitialized with new {parameter_type}: {value}")
+                
+                # Resume simulation if it was running
+                if was_running:
+                    self.sim_controller.start_simulation()
+                    
+            except Exception as e:
+                print(f"Error reinitializing KH flow: {e}")
+                import traceback
+                traceback.print_exc()

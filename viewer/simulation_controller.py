@@ -654,12 +654,13 @@ class SimulationController:
         self.latest_data = None
         self.latest_metrics = None
         self.callbacks = None  # Store callbacks for reconnecting signals
-        
+        self.running = False  # Running state for compatibility checks
+
         # Frame skipping controls (kept for compatibility with existing code)
         self.simulation_step_counter = 0
         self.update_every = 1  # Default to 1 (no skipping)
         self.should_update_visualization = False
-        
+
         # Performance tracking
         self.frame_counter = 0
         self.fps_counter = 0
@@ -816,6 +817,7 @@ class SimulationController:
 
     def stop_simulation(self):
         """Stop the simulation and metrics worker"""
+        self.running = False
         if self.simulation_worker:
             self.simulation_worker.stop_simulation()
         if self.metrics_worker:

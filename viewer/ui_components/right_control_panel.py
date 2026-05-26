@@ -4,6 +4,7 @@ Right control panel for Error Metrics and Airfoil Metrics.
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
 from PyQt6.QtCore import Qt
+from .obstacle_controls import ObstacleControls
 
 
 class RightControlPanel(QWidget):
@@ -14,6 +15,7 @@ class RightControlPanel(QWidget):
         self.error_metrics_group = None
         self.airfoil_metrics_group = None
         self.solver_info_group = None
+        self.obstacle_controls = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -68,3 +70,14 @@ class RightControlPanel(QWidget):
 
         # Insert at the top (before metrics groups)
         self.scroll_layout.insertWidget(0, solver_info_group)
+
+    def set_obstacle_controls(self, obstacle_controls):
+        """Set the obstacle controls to display at the bottom"""
+        self.obstacle_controls = obstacle_controls
+
+        # Remove from parent layout if it has one
+        if obstacle_controls.parent() is not None:
+            obstacle_controls.parent().layout().removeWidget(obstacle_controls)
+
+        # Insert before the stretch (at the bottom)
+        self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, obstacle_controls)

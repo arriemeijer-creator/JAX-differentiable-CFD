@@ -580,10 +580,12 @@ class DisplayManager:
                             self.v = np.array(solver.v)
                             self.p = np.array(solver.current_pressure) if hasattr(solver, 'current_pressure') else np.zeros_like(solver.u)
                             self.mask = np.array(solver.mask) if hasattr(solver, 'mask') else np.ones_like(solver.u)
-                            self.dx = solver.grid.dx
-                            self.dy = solver.grid.dy
-                            self.nx = solver.grid.nx
-                            self.ny = solver.grid.ny
+                            # Extract grid dimensions from actual array shapes (not JIT-compiled constants)
+                            self.nx = self.u.shape[0]
+                            self.ny = self.u.shape[1]
+                            # Calculate dx, dy from domain size and actual array dimensions
+                            self.dx = solver.grid.lx / self.nx
+                            self.dy = solver.grid.ly / self.ny
                             # Handle different solver types (BaselineSolver vs LBMSolver)
                             if hasattr(solver, 'state') and hasattr(solver.state, 'iteration'):
                                 self.iteration = solver.state.iteration
@@ -613,10 +615,12 @@ class DisplayManager:
                             self.u = np.array(solver.u)
                             self.v = np.array(solver.v)
                             self.mask = np.array(solver.mask) if hasattr(solver, 'mask') else np.ones_like(solver.u)
-                            self.dx = solver.grid.dx
-                            self.dy = solver.grid.dy
-                            self.nx = solver.grid.nx
-                            self.ny = solver.grid.ny
+                            # Extract grid dimensions from actual array shapes (not JIT-compiled constants)
+                            self.nx = self.u.shape[0]
+                            self.ny = self.u.shape[1]
+                            # Calculate dx, dy from domain size and actual array dimensions
+                            self.dx = solver.grid.lx / self.nx
+                            self.dy = solver.grid.ly / self.ny
                             # Handle different solver types (BaselineSolver vs LBMSolver)
                             if hasattr(solver, 'state') and hasattr(solver.state, 'iteration'):
                                 self.iteration = solver.state.iteration
@@ -638,7 +642,9 @@ class DisplayManager:
                     result = self.vk_validator.compute(snapshot, lift_coefficient=lift_coeff)
                     # Get visualization data and pass to overlay
                     viz_data = self.vk_validator.get_visualization_data(snapshot)
-                    self.vk_overlay.update(viz_data)
+                    # Pass current domain bounds to overlay
+                    domain_bounds = (0.0, self.solver.grid.lx, 0.0, self.solver.grid.ly)
+                    self.vk_overlay.update(viz_data, domain_bounds=domain_bounds)
             except Exception as vk_error:
                 print(f"Warning: VK vortex tracking update failed: {vk_error}")
                 # Continue running even if VK tracking fails
@@ -1008,6 +1014,19 @@ class DisplayManager:
                 if 'strouhal' not in self.solver.history['airfoil_metrics']:
                     self.solver.history['airfoil_metrics']['strouhal'] = []
                 self.solver.history['airfoil_metrics']['strouhal'].append(0.0)
+
+            # Update Cd plot with live data
+            if hasattr(self, 'flow_viz') and self.flow_viz is not None:
+                # Use iteration count as time proxy since solver history time might not be synchronized
+                iteration = airfoil_metrics.get('iteration', 0)
+                # Convert iteration to approximate time using dt
+                dt = getattr(self.solver.sim_params, 'fixed_dt', 0.005)
+                current_time = iteration * dt if iteration > 0 else 0.0
+                self.flow_viz.update_coefficients(
+                    cl_value=airfoil_metrics['CL'],
+                    cd_value=airfoil_metrics['CD'],
+                    time_value=current_time
+                )
 
             # Update UI with airfoil metrics
             if hasattr(self, 'info_panel') and self.info_panel is not None:

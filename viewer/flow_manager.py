@@ -19,13 +19,25 @@ class FlowManager:
         """
         def store_subscriber(state):
             """Handle store state changes and apply to solver."""
+            print(f"[STORE SUB] Received state update, obstacle_type={state.obstacle.obstacle_type}")
             if hasattr(self, 'solver') and self.solver is not None:
                 # Check if obstacle type changed - MUST BE CHECKED FIRST before position changes
                 current_obstacle_type = getattr(self.solver.sim_params, 'obstacle_type', None)
                 new_obstacle_type = state.obstacle.obstacle_type
                 
+                print(f"[STORE SYNC] Comparing: current={current_obstacle_type}, new={new_obstacle_type}")
+                
                 obstacle_type_changed = False
                 if current_obstacle_type != new_obstacle_type:
+                    if new_obstacle_type == 'urban_map':
+                        # For urban_map, ensure SDF field exists
+                        sdf_field = getattr(self.solver.sim_params, 'sdf_field', None)
+                        if sdf_field is None:
+                            print(f"[STORE SYNC] Urban map selected but no SDF field - generating mockup")
+                            self._generate_mockup_urban_map()
+                    else:
+                        # Handle other obstacle types
+                        print(f"[STORE SYNC] Applying obstacle type change: {current_obstacle_type} -> {new_obstacle_type}")
                     print(f"[STORE SYNC] Applying obstacle type change: {current_obstacle_type} -> {new_obstacle_type}")
                     
                     # Stop simulation before obstacle type change to prevent background execution
@@ -67,6 +79,12 @@ class FlowManager:
                         self.solver.sim_params.cow_x = cow_x
                         self.solver.sim_params.cow_y = cow_y
                         print(f"[STORE SYNC] Setting cow position based on grid: x={cow_x}, y={cow_y}")
+                    elif new_obstacle_type == 'urban_map':
+                        # Generate mockup SDF if no map is loaded
+                        sdf_field = getattr(self.solver.sim_params, 'sdf_field', None)
+                        if sdf_field is None:
+                            print("[STORE SYNC] Generating mockup urban map SDF")
+                            self._generate_mockup_urban_map()
                     
                     # Call solver API to handle obstacle type change (solver manages heavy logic)
                     self.solver.set_obstacle_type(new_obstacle_type)
@@ -366,6 +384,14 @@ class FlowManager:
                 
                 # Update plot ranges
                 self.flow_viz.update_plots_for_new_grid(actual_nx, actual_ny, actual_lx, actual_ly)
+                
+                # Update VK validator and overlay when grid changes
+                if hasattr(self, 'vk_validator') and self.vk_validator is not None:
+                    dx = actual_lx / actual_nx
+                    dy = actual_ly / actual_ny
+                    self.vk_validator.update_grid_dimensions(actual_nx, actual_ny, dx, dy)
+                if hasattr(self, 'vk_overlay') and self.vk_overlay is not None:
+                    self.vk_overlay.update_domain_bounds(0.0, actual_lx, 0.0, actual_ly)
             except Exception as viz_error:
                 print(f"ERROR during visualization recreation: {viz_error}")
                 import traceback
@@ -566,3 +592,108 @@ class FlowManager:
         if hasattr(self.solver, '_step_jit'):
             delattr(self.solver, '_step_jit')
         self.solver._step_jit = self.solver.get_step_jit()
+    
+    def on_outlet_type_changed(self, outlet_type: str) -> None:
+        """Handle outlet type change for LBM solver."""
+        # Check if solver is LBM
+        if not hasattr(self.solver, 'lbm_params'):
+            print("Outlet type change only applies to LBM solver")
+            return
+        
+        # Update outlet type in LBM parameters
+        self.solver.lbm_params.outlet_type = outlet_type
+        print(f"LBM outlet type changed to: {outlet_type}")
+        
+        # Clear JIT cache and recompile since outlet_type is a static argument
+        import jax
+        jax.clear_caches()
+        self.solver._jit_cache = {}
+        if hasattr(self.solver, '_step_jit'):
+            delattr(self.solver, '_step_jit')
+        self.solver._step_jit = self.solver.get_step_jit()
+    
+    def on_bc_mode_changed(self, bc_mode: str) -> None:
+        """Handle BC mode change for LBM solver."""
+        # Check if solver is LBM
+        if not hasattr(self.solver, 'lbm_params'):
+            print("BC mode change only applies to LBM solver")
+            return
+        
+        # Update BC mode in LBM parameters
+        self.solver.lbm_params.bc_mode = bc_mode
+        print(f"LBM BC mode changed to: {bc_mode}")
+        if bc_mode == 'supply':
+            print("Flow: Supply on left, outlet on right (L→R)")
+        else:
+            print("Flow: Supply on right, outlet on left (R→L)")
+        
+        # Clear JIT cache and recompile since bc_mode is a static argument
+        import jax
+        jax.clear_caches()
+        self.solver._jit_cache = {}
+        if hasattr(self.solver, '_step_jit'):
+            delattr(self.solver, '_step_jit')
+        self.solver._step_jit = self.solver.get_step_jit()
+        
+        # Reinitialize flow to set correct initial velocity direction
+        if hasattr(self.solver, '_initialize_flow'):
+            self.solver._initialize_flow()
+            from lbm.collision import equilibrium
+            self.solver.f = equilibrium(self.solver.rho, self.solver.u, self.solver.v, 
+                                      self.solver.lattice.get_cx(), self.solver.lattice.get_cy(),
+                                      self.solver.lattice.w, self.solver.lattice.cs_squared)
+        
+        # Reset iteration
+        self.solver.iteration = 0
+    
+    def _generate_mockup_urban_map(self):
+        """Generate a mockup urban map SDF with simple building rectangles"""
+        try:
+            import numpy as np
+            
+            # Get grid dimensions
+            X = np.array(self.solver.grid.X)
+            Y = np.array(self.solver.grid.Y)
+            nx, ny = X.shape
+            
+            # Start with all fluid (positive SDF)
+            sdf = np.ones((nx, ny), dtype=np.float32) * 10.0
+            
+            # Define some simple building rectangles as (x_min, x_max, y_min, y_max)
+            # Using normalized coordinates relative to grid bounds
+            lx = self.solver.grid.lx
+            ly = self.solver.grid.ly
+            
+            buildings = [
+                (0.3 * lx, 0.4 * lx, 0.3 * ly, 0.5 * ly),  # Building 1
+                (0.5 * lx, 0.6 * lx, 0.2 * ly, 0.4 * ly),  # Building 2
+                (0.7 * lx, 0.8 * lx, 0.3 * ly, 0.6 * ly),  # Building 3
+                (0.4 * lx, 0.5 * lx, 0.6 * ly, 0.7 * ly),  # Building 4
+                (0.6 * lx, 0.7 * lx, 0.7 * ly, 0.8 * ly),  # Building 5
+            ]
+            
+            # Compute SDF for each building (negative inside, positive outside)
+            for bx_min, bx_max, by_min, by_max in buildings:
+                # Distance to rectangle
+                dx_left = X - bx_min
+                dx_right = bx_max - X
+                dy_bottom = Y - by_min
+                dy_top = by_max - Y
+                
+                # Signed distance to rectangle
+                dx = np.maximum(np.maximum(-dx_left, -dx_right), np.maximum(dx_left, dx_right))
+                dy = np.maximum(np.maximum(-dy_bottom, -dy_top), np.maximum(dy_bottom, dy_top))
+                building_sdf = np.maximum(dx, dy)
+                
+                # Take minimum with current SDF (union of buildings)
+                sdf = np.minimum(sdf, building_sdf)
+            
+            # Store the mockup SDF
+            self.solver.sim_params.sdf_field = sdf
+            
+            print("Generated mockup urban map SDF with 5 buildings")
+            
+        except Exception as e:
+            print(f"Error generating mockup urban map: {e}")
+            import traceback
+            traceback.print_exc()

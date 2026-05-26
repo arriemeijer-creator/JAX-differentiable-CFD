@@ -205,6 +205,16 @@ class VKStrouhalTracker:
         self.nx = snapshot.nx
         self.ny = snapshot.ny
     
+    def update_grid_dimensions(self, nx: int, ny: int, dx: float, dy: float) -> None:
+        """Update grid dimensions when the simulation grid changes."""
+        self.nx = nx
+        self.ny = ny
+        self.dx = dx
+        self.dy = dy
+        # Clear tracked vortices since they're no longer valid with new grid
+        self.tracked_vortices = []
+        self.oscillation_history = []
+    
     def _track_wake_centerline(self, v: np.ndarray) -> float:
         """
         Track wake centerline using vertical velocity component.
@@ -546,11 +556,6 @@ class VKStrouhalTracker:
 
         # Apply mask to vorticity
         vorticity_wake = np.where(wake_mask, vorticity, 0)
-
-        # Debug: print vorticity range
-        pos_vort_max = np.max(vorticity_wake)
-        neg_vort_min = np.min(vorticity_wake)
-        print(f"DEBUG: Vorticity range (wake only): [{neg_vort_min:.4f}, {pos_vort_max:.4f}]")
 
         # Find all valid peaks (positive) and troughs (negative) in 2D
         min_peak_distance_norm = 0.05   # minimum spacing between two distinct vortices

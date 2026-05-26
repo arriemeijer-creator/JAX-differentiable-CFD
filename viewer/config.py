@@ -87,7 +87,14 @@ class GridPresets:
             '128x128 (Medium)',
             '256x256 (Fine)',
             '512x512 (Ultra Fine)'
-        ]
+        ],
+        'kelvin_helmholtz': [
+            '128x128 (Coarse)',
+            '256x256 (Medium)',
+            '512x512 (Fine)',
+            '1024x1024 (Ultra Fine)'
+        ],
+        'kelvin_helmholtz': (2.0, 1.0)
     }
     
     DOMAIN_SIZES: Dict[str, Tuple[float, float]] = {
@@ -135,7 +142,7 @@ class SolverPresets:
     ]
     
     FLOW_TYPES = [
-        "von_karman", "lid_driven_cavity", "taylor_green"
+        "von_karman", "lid_driven_cavity", "taylor_green", "kelvin_helmholtz"
     ]
 
 

@@ -90,18 +90,88 @@ class ControlPanel(QWidget):
 
         # ========== SOLVER TYPE GROUP ==========
         solver_type_group = CollapsibleGroupBox("Solver Type", start_collapsed=True)
-        solver_type_layout = QHBoxLayout()
-        solver_type_layout.addWidget(QLabel("Method:"))
+        solver_type_layout = QVBoxLayout()
+        
+        # Solver type selection row
+        solver_row = QHBoxLayout()
+        solver_row.addWidget(QLabel("Method:"))
         self.solver_type_combo = QComboBox()
         self.solver_type_combo.addItem("Navier-Stokes", "navier_stokes")
         self.solver_type_combo.addItem("Lattice Boltzmann", "lattice_boltzmann")
         self.solver_type_combo.setCurrentIndex(0)  # Default to Navier-Stokes
         self.solver_type_combo.setMaximumWidth(180)
-        solver_type_layout.addWidget(self.solver_type_combo)
+        self.solver_type_combo.currentIndexChanged.connect(self.on_solver_type_index_changed)
+        solver_row.addWidget(self.solver_type_combo)
         self.apply_solver_type_btn = QPushButton("Apply")
         self.apply_solver_type_btn.setMaximumWidth(60)
-        solver_type_layout.addWidget(self.apply_solver_type_btn)
-        solver_type_layout.addStretch()
+        solver_row.addWidget(self.apply_solver_type_btn)
+        solver_row.addStretch()
+        solver_type_layout.addLayout(solver_row)
+        
+        # LBM Tau parameter row (initially hidden)
+        self.lbm_tau_widget = QWidget()
+        lbm_tau_row = QHBoxLayout(self.lbm_tau_widget)
+        lbm_tau_row.setContentsMargins(0, 0, 0, 0)
+        lbm_tau_row.addWidget(QLabel("Tau:"))
+        self.tau_slider = QSlider(Qt.Orientation.Horizontal)
+        self.tau_slider.setRange(51, 200)  # Range for tau: 0.51 to 2.00 (multiply by 0.01)
+        self.tau_slider.setValue(60)  # Default tau = 0.60
+        self.tau_slider.setMaximumWidth(350)
+        lbm_tau_row.addWidget(self.tau_slider)
+        self.tau_spinbox = QDoubleSpinBox()
+        self.tau_spinbox.setRange(0.51, 2.00)
+        self.tau_spinbox.setSingleStep(0.001)
+        self.tau_spinbox.setDecimals(3)
+        self.tau_spinbox.setValue(0.60)
+        self.tau_spinbox.setMaximumWidth(80)
+        lbm_tau_row.addWidget(self.tau_spinbox)
+        self.apply_tau_btn = QPushButton("Apply")
+        self.apply_tau_btn.setMaximumWidth(50)
+        lbm_tau_row.addWidget(self.apply_tau_btn)
+        lbm_tau_row.addStretch()
+        solver_type_layout.addWidget(self.lbm_tau_widget)
+        self.lbm_tau_widget.setVisible(False)  # Initially hidden
+        self.tau_slider.valueChanged.connect(self._update_tau_from_slider)
+        self.tau_spinbox.valueChanged.connect(self._update_tau_from_spinbox)
+        
+        # LBM Outlet type row (initially hidden)
+        self.lbm_outlet_widget = QWidget()
+        lbm_outlet_row = QHBoxLayout(self.lbm_outlet_widget)
+        lbm_outlet_row.setContentsMargins(0, 0, 0, 0)
+        lbm_outlet_row.addWidget(QLabel("Outlet:"))
+        self.outlet_type_combo = QComboBox()
+        self.outlet_type_combo.addItem("Convective (CBC)", "convective")
+        self.outlet_type_combo.addItem("Extrapolation", "extrapolation")
+        self.outlet_type_combo.setCurrentIndex(0)  # Default to convective
+        self.outlet_type_combo.setMaximumWidth(150)
+        lbm_outlet_row.addWidget(self.outlet_type_combo)
+        self.apply_outlet_btn = QPushButton("Apply")
+        self.apply_outlet_btn.setMaximumWidth(50)
+        self.apply_outlet_btn.clicked.connect(self.on_outlet_type_changed)
+        lbm_outlet_row.addWidget(self.apply_outlet_btn)
+        lbm_outlet_row.addStretch()
+        solver_type_layout.addWidget(self.lbm_outlet_widget)
+        self.lbm_outlet_widget.setVisible(False)  # Initially hidden
+        
+        # LBM BC mode row (initially hidden)
+        self.lbm_bc_mode_widget = QWidget()
+        lbm_bc_mode_row = QHBoxLayout(self.lbm_bc_mode_widget)
+        lbm_bc_mode_row.setContentsMargins(0, 0, 0, 0)
+        lbm_bc_mode_row.addWidget(QLabel("BC Mode:"))
+        self.bc_mode_combo = QComboBox()
+        self.bc_mode_combo.addItem("Supply (L→R)", "supply")
+        self.bc_mode_combo.addItem("Extract (R→L)", "extract")
+        self.bc_mode_combo.setCurrentIndex(0)  # Default to supply
+        self.bc_mode_combo.setMaximumWidth(150)
+        lbm_bc_mode_row.addWidget(self.bc_mode_combo)
+        self.apply_bc_mode_btn = QPushButton("Apply")
+        self.apply_bc_mode_btn.setMaximumWidth(50)
+        self.apply_bc_mode_btn.clicked.connect(self.on_bc_mode_changed)
+        lbm_bc_mode_row.addWidget(self.apply_bc_mode_btn)
+        lbm_bc_mode_row.addStretch()
+        solver_type_layout.addWidget(self.lbm_bc_mode_widget)
+        self.lbm_bc_mode_widget.setVisible(False)  # Initially hidden
+        
         solver_type_group.setLayout(solver_type_layout)
         sidebar_layout.addWidget(solver_type_group)
 
@@ -163,7 +233,7 @@ class ControlPanel(QWidget):
         flow_row = QHBoxLayout()
         flow_row.addWidget(QLabel("Flow:"))
         self.flow_combo = QComboBox()
-        self.flow_combo.addItems(["von_karman", "lid_driven_cavity", "taylor_green"])
+        self.flow_combo.addItems(["von_karman", "lid_driven_cavity", "taylor_green", "kelvin_helmholtz"])
         self.flow_combo.setMaximumWidth(150)
         self.flow_combo.currentTextChanged.connect(self.on_flow_type_changed)
         flow_row.addWidget(self.flow_combo)
@@ -182,13 +252,82 @@ class ControlPanel(QWidget):
             radio = QRadioButton(str(Re))
             self.ldc_re_radios[Re] = radio
             self.ldc_re_button_group.addButton(radio, Re)
-            self.ldc_re_button_group.idClicked.connect(self.on_ldc_re_selected)
             self.ldc_re_row.addWidget(radio)
             if Re == 1000:  # Default selection
                 radio.setChecked(True)
+        # Connect button group signal outside the loop (only once)
+        self.ldc_re_button_group.idClicked.connect(self.on_ldc_re_selected)
         self.ldc_re_row.addStretch()
         flow_layout.addWidget(self.ldc_re_widget)
         self.ldc_re_widget.setVisible(False)  # Initially hidden
+        
+        # Add separator line
+        from PyQt6.QtWidgets import QFrame
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        flow_layout.addWidget(separator)
+        
+        # Add KH parameters directly to flow type group
+        self.kh_widget = QWidget()
+        kh_layout = QGridLayout(self.kh_widget)
+        kh_layout.setSpacing(5)
+        kh_layout.setColumnStretch(3, 1)  # Stretch last column
+
+        # Row 0: Shear Velocity (U0)
+        kh_layout.addWidget(QLabel("Shear Velocity (U₀):"), 0, 0)
+        self.kh_strength_slider = QSlider(Qt.Orientation.Horizontal)
+        self.kh_strength_slider.setRange(1, 50)  # 0.1 to 5.0
+        self.kh_strength_slider.setValue(10)  # Default 1.0
+        self.kh_strength_slider.setMaximumWidth(100)
+        kh_layout.addWidget(self.kh_strength_slider, 0, 1)
+        self.kh_strength_label = QLabel("1.0")
+        self.kh_strength_label.setMinimumWidth(30)
+        kh_layout.addWidget(self.kh_strength_label, 0, 2)
+        self.apply_kh_strength_btn = QPushButton("Apply")
+        self.apply_kh_strength_btn.setMaximumWidth(50)
+        kh_layout.addWidget(self.apply_kh_strength_btn, 0, 3)
+
+        # Row 1: Perturbation Amplitude
+        kh_layout.addWidget(QLabel("Perturbation:"), 1, 0)
+        self.kh_perturbation_slider = QSlider(Qt.Orientation.Horizontal)
+        self.kh_perturbation_slider.setRange(1, 100)  # 0.001 to 0.1
+        self.kh_perturbation_slider.setValue(10)  # Default 0.01
+        self.kh_perturbation_slider.setMaximumWidth(100)
+        kh_layout.addWidget(self.kh_perturbation_slider, 1, 1)
+        self.kh_perturbation_label = QLabel("0.01")
+        self.kh_perturbation_label.setMinimumWidth(30)
+        kh_layout.addWidget(self.kh_perturbation_label, 1, 2)
+        self.apply_kh_perturbation_btn = QPushButton("Apply")
+        self.apply_kh_perturbation_btn.setMaximumWidth(50)
+        kh_layout.addWidget(self.apply_kh_perturbation_btn, 1, 3)
+
+        # Row 2: Shear Layer Thickness
+        kh_layout.addWidget(QLabel("Shear Thickness:"), 2, 0)
+        self.kh_thickness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.kh_thickness_slider.setRange(5, 50)  # 0.05 to 0.5
+        self.kh_thickness_slider.setValue(10)  # Default 0.1
+        self.kh_thickness_slider.setMaximumWidth(100)
+        kh_layout.addWidget(self.kh_thickness_slider, 2, 1)
+        self.kh_thickness_label = QLabel("0.10")
+        self.kh_thickness_label.setMinimumWidth(30)
+        kh_layout.addWidget(self.kh_thickness_label, 2, 2)
+        self.apply_kh_thickness_btn = QPushButton("Apply")
+        self.apply_kh_thickness_btn.setMaximumWidth(50)
+        kh_layout.addWidget(self.apply_kh_thickness_btn, 2, 3)
+
+        # Initially hide KH parameters widget
+        self.kh_widget.setVisible(False)
+
+        # Connect KH slider signals after they are created
+        self.kh_strength_slider.valueChanged.connect(self._update_kh_strength_label)
+        self.kh_perturbation_slider.valueChanged.connect(self._update_kh_perturbation_label)
+        self.kh_thickness_slider.valueChanged.connect(self._update_kh_thickness_label)
+        self.apply_kh_strength_btn.clicked.connect(self.on_kh_strength_changed)
+        self.apply_kh_perturbation_btn.clicked.connect(self.on_kh_perturbation_changed)
+        self.apply_kh_thickness_btn.clicked.connect(self.on_kh_thickness_changed)
+
+        flow_layout.addWidget(self.kh_widget)
         
         flow_group.setLayout(flow_layout)
         sidebar_layout.addWidget(flow_group)
@@ -349,9 +488,9 @@ class ControlPanel(QWidget):
         info_group.setLayout(info_layout)
         sidebar_layout.addWidget(info_group)
 
-        # ========== OBSTACLE CONTROLS ==========
+        # ========== OBSTACLE CONTROLS (moved to right panel) ==========
         self.obstacle_controls = ObstacleControls(self)
-        sidebar_layout.addWidget(self.obstacle_controls)
+        # Not added to sidebar_layout - moved to right_control_panel
 
         # ========== VISUALIZATION CONTROLS ==========
         self.visualization_controls = VisualizationControls(self)
@@ -386,6 +525,89 @@ class ControlPanel(QWidget):
         value = self.epsilon_slider.value() / 100.0
         self.epsilon_label.setText(f"{value:.2f}")
 
+    def _update_tau_from_slider(self):
+        """Update tau spinbox when slider changes."""
+        value = self.tau_slider.value() / 100.0
+        self.tau_spinbox.blockSignals(True)
+        self.tau_spinbox.setValue(value)
+        self.tau_spinbox.blockSignals(False)
+
+    def _update_tau_from_spinbox(self):
+        """Update tau slider when spinbox changes."""
+        value = self.tau_spinbox.value()
+        slider_value = int(value * 100)
+        self.tau_slider.blockSignals(True)
+        self.tau_slider.setValue(slider_value)
+        self.tau_slider.blockSignals(False)
+
+    def on_solver_type_index_changed(self, index: int) -> None:
+        """Handle solver type dropdown change - show/hide LBM Tau controls and update flow options."""
+        # Get solver type from selected index
+        solver_type = self.solver_type_combo.itemData(index)
+        is_lbm = (solver_type == "lattice_boltzmann")
+        
+        print(f"Solver type changed to: {solver_type} (index: {index})")
+        print(f"Is LBM: {is_lbm}")
+        
+        # Show Tau controls only for lattice_boltzmann
+        self.lbm_tau_widget.setVisible(is_lbm)
+        
+        # Show Outlet controls only for lattice_boltzmann
+        self.lbm_outlet_widget.setVisible(is_lbm)
+        
+        # Show BC mode controls only for lattice_boltzmann
+        self.lbm_bc_mode_widget.setVisible(is_lbm)
+        
+        # Update flow combo to include/exclude Kelvin-Helmholtz based on solver type
+        current_flow = self.flow_combo.currentText()
+        self.flow_combo.clear()
+        
+        if is_lbm:
+            # KH is only available for LBM (periodic, initial-condition-driven)
+            self.flow_combo.addItems(["von_karman", "lid_driven_cavity", "taylor_green", "kelvin_helmholtz"])
+        else:
+            # Navier-Stokes: KH not available (requires LBM streaming)
+            self.flow_combo.addItems(["von_karman", "lid_driven_cavity", "taylor_green"])
+        
+        # Restore previous selection if it's still valid
+        if current_flow in [self.flow_combo.itemText(i) for i in range(self.flow_combo.count())]:
+            self.flow_combo.setCurrentText(current_flow)
+        else:
+            # Default to von_karman if previous selection is no longer valid
+            self.flow_combo.setCurrentText("von_karman")
+        
+        # Show/hide KH parameters widget based on flow type
+        current_flow_after = self.flow_combo.currentText()
+        show_kh_params = is_lbm and current_flow_after == 'kelvin_helmholtz'
+        self.kh_widget.setVisible(show_kh_params)
+        if show_kh_params:
+            # Auto-expand the flow type groupbox to show KH parameters
+            parent = self.kh_widget.parent()
+            while parent is not None:
+                if hasattr(parent, 'set_collapsed'):
+                    parent.set_collapsed(False)
+                    break
+                parent = parent.parent()
+        
+        print(f"Tau widget visibility set to: {is_lbm}")
+        print(f"KH parameters visibility set to: {show_kh_params}")
+        
+        # Auto-expand the solver type groupbox when LBM is selected
+        if is_lbm:
+            # Find the parent CollapsibleGroupBox and expand it
+            parent = self.lbm_tau_widget.parent()
+            while parent is not None:
+                if hasattr(parent, 'set_collapsed'):
+                    parent.set_collapsed(False)
+                    print("Expanded solver type groupbox")
+                    break
+                parent = parent.parent()
+        
+        # Also delegate to parent viewer
+        if hasattr(self, 'parent_viewer') and self.parent_viewer is not None:
+            if hasattr(self.parent_viewer, 'on_solver_type_changed'):
+                self.parent_viewer.on_solver_type_changed(solver_type)
+
     def _update_hyper_viscosity_label(self):
         """Update hyperviscosity label when slider changes."""
         value = self.hyper_viscosity_slider.value()
@@ -409,6 +631,48 @@ class ControlPanel(QWidget):
         """Update V-cycles label when slider changes."""
         value = self.vcycles_slider.value()
         self.vcycles_label.setText(str(value))
+
+    def _update_kh_strength_label(self):
+        """Update KH strength label when slider changes."""
+        value = self.kh_strength_slider.value()
+        strength = value / 10.0  # Convert to 0.1-5.0 range
+        self.kh_strength_label.setText(f"{strength:.1f}")
+
+    def _update_kh_perturbation_label(self):
+        """Update KH perturbation label when slider changes."""
+        value = self.kh_perturbation_slider.value()
+        perturbation = value / 1000.0  # Convert to 0.001-0.1 range
+        self.kh_perturbation_label.setText(f"{perturbation:.3f}")
+
+    def _update_kh_thickness_label(self):
+        """Update KH thickness label when slider changes."""
+        value = self.kh_thickness_slider.value()
+        thickness = value / 100.0  # Convert to 0.05-0.5 range
+        self.kh_thickness_label.setText(f"{thickness:.2f}")
+
+    def on_kh_strength_changed(self):
+        """Handle KH strength slider change."""
+        value = self.kh_strength_slider.value()
+        strength = value / 10.0  # Convert to 0.1-5.0 range
+        if hasattr(self, 'parent_viewer') and self.parent_viewer is not None:
+            if hasattr(self.parent_viewer, 'apply_kh_parameters'):
+                self.parent_viewer.apply_kh_parameters('strength', strength)
+
+    def on_kh_perturbation_changed(self):
+        """Handle KH perturbation slider change."""
+        value = self.kh_perturbation_slider.value()
+        perturbation = value / 1000.0  # Convert to 0.001-0.1 range
+        if hasattr(self, 'parent_viewer') and self.parent_viewer is not None:
+            if hasattr(self.parent_viewer, 'apply_kh_parameters'):
+                self.parent_viewer.apply_kh_parameters('perturbation', perturbation)
+
+    def on_kh_thickness_changed(self):
+        """Handle KH thickness slider change."""
+        value = self.kh_thickness_slider.value()
+        thickness = value / 100.0  # Convert to 0.05-0.5 range
+        if hasattr(self, 'parent_viewer') and self.parent_viewer is not None:
+            if hasattr(self.parent_viewer, 'apply_kh_parameters'):
+                self.parent_viewer.apply_kh_parameters('thickness', thickness)
 
     def _on_les_checkbox_changed(self, state):
         """Enable/disable LES controls when checkbox is toggled"""
@@ -649,7 +913,15 @@ class ControlPanel(QWidget):
 
     @property
     def save_btn(self):
-        return self.visualization_controls.save_btn
+        return self.visualization_controls.save_video_btn
+
+    @property
+    def save_state_btn(self):
+        return self.visualization_controls.save_state_btn
+
+    @property
+    def load_state_btn(self):
+        return self.visualization_controls.load_state_btn
 
     @property
     def autofit_velocity_btn(self):
@@ -751,10 +1023,30 @@ class ControlPanel(QWidget):
                 self.parent_viewer.on_obstacle_type_selected(obstacle_type)
     
     def on_flow_type_changed(self, flow_type: str) -> None:
-        """Handle flow type dropdown change - show/hide LDC benchmark controls."""
+        """Handle flow type dropdown change - show/hide LDC benchmark controls and KH parameters."""
         # Show LDC Re radio buttons only for lid_driven_cavity
         is_ldc = (flow_type == "lid_driven_cavity")
         self.ldc_re_widget.setVisible(is_ldc)
+        
+        # Show KH parameters only for kelvin_helmholtz with LBM solver
+        is_kh = (flow_type == "kelvin_helmholtz")
+        # Check if current solver is LBM
+        solver_type = self.solver_type_combo.currentData()
+        is_lbm = (solver_type == "lattice_boltzmann")
+        show_kh_params = is_kh and is_lbm
+        
+        self.kh_widget.setVisible(show_kh_params)
+        if show_kh_params:
+            # Auto-expand the flow type groupbox to show KH parameters
+            parent = self.kh_widget.parent()
+            while parent is not None:
+                if hasattr(parent, 'set_collapsed'):
+                    parent.set_collapsed(False)
+                    break
+                parent = parent.parent()
+        
+        print(f"Flow type changed to: {flow_type}")
+        print(f"KH parameters visibility set to: {show_kh_params}")
         
         # Also delegate to parent viewer
         if hasattr(self, 'parent_viewer') and self.parent_viewer is not None:
@@ -763,6 +1055,10 @@ class ControlPanel(QWidget):
     
     def on_ldc_re_selected(self, re_value: int) -> None:
         """Handle LDC benchmark Re radio button selection."""
+        # Guard against incorrect calls
+        if re_value is None:
+            return
+        
         # Update Reynolds number input
         self.re_input.setValue(float(re_value))
         self.lock_re_cb.setChecked(True)
@@ -772,3 +1068,23 @@ class ControlPanel(QWidget):
         if hasattr(self, 'parent_viewer') and self.parent_viewer is not None:
             if hasattr(self.parent_viewer, 'on_ldc_re_selected'):
                 self.parent_viewer.on_ldc_re_selected(re_value)
+    
+    def on_outlet_type_changed(self) -> None:
+        """Handle outlet type dropdown change."""
+        outlet_type = self.outlet_type_combo.currentData()
+        print(f"Outlet type changed to: {outlet_type}")
+        
+        # Delegate to parent viewer to apply the outlet type change
+        if hasattr(self, 'parent_viewer') and self.parent_viewer is not None:
+            if hasattr(self.parent_viewer, 'on_outlet_type_changed'):
+                self.parent_viewer.on_outlet_type_changed(outlet_type)
+    
+    def on_bc_mode_changed(self) -> None:
+        """Handle BC mode dropdown change."""
+        bc_mode = self.bc_mode_combo.currentData()
+        print(f"BC mode changed to: {bc_mode}")
+        
+        # Delegate to parent viewer to apply the BC mode change
+        if hasattr(self, 'parent_viewer') and self.parent_viewer is not None:
+            if hasattr(self.parent_viewer, 'on_bc_mode_changed'):
+                self.parent_viewer.on_bc_mode_changed(bc_mode)

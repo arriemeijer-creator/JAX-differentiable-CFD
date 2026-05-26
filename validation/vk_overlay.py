@@ -7,7 +7,7 @@ Strouhal frequency visualization.
 """
 
 import numpy as np
-from typing import Optional
+from typing import Optional, Dict
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPen, QColor
@@ -117,26 +117,28 @@ class VKVortexOverlay:
         # Initialize boundary lines
         self.update_boundary_lines(self.x_min, self.x_max)
     
-    def update(self, tracking_data: dict):
+    def update(self, tracking_data: Dict, domain_bounds: Optional[tuple] = None):
         """
-        Update visualization with computed tracking data.
+        Update vortex overlay with new tracking data.
 
         Args:
-            tracking_data: Dictionary containing:
-                - primary_vortices: List of (x_norm, y_norm, sign, id) tuples for vortex centers
-                - wake_center: Current wake center y-position (normalized)
+            tracking_data: Dictionary with:
+                - primary_vortices: List of (x_norm, y_norm, sign, id) tuples
+                - wake_center: Wake centerline y-position (normalized)
                 - tracking_x: X-position for tracking line (normalized)
                 - strouhal: Strouhal number (or None)
                 - is_shedding: Boolean indicating if shedding is detected
+            domain_bounds: Optional tuple (x_min, x_max, y_min, y_max) to update domain bounds
         """
+        # Update domain bounds if provided
+        if domain_bounds is not None:
+            self.domain_x_min, self.domain_x_max, self.domain_y_min, self.domain_y_max = domain_bounds
+        
         primary_vortices = tracking_data.get('primary_vortices', [])
         wake_center = tracking_data.get('wake_center', 0.5)
         tracking_x = tracking_data.get('tracking_x', 0.5)
         strouhal = tracking_data.get('strouhal', None)
         is_shedding = tracking_data.get('is_shedding', False)
-
-        # Debug: print received data
-        print(f"DEBUG Overlay: Received {len(primary_vortices)} vortices, shedding={is_shedding}")
 
         # Get plot bounds for coordinate conversion
         view_range = self.plot_widget.viewRange()
@@ -242,6 +244,23 @@ class VKVortexOverlay:
         view_range = self.plot_widget.viewRange()
         y_min, y_max = view_range[1]
         self._update_boundary_lines(None, None, y_min, y_max)
+    
+    def update_domain_bounds(self, x_min: float, x_max: float, y_min: float, y_max: float):
+        """
+        Update the physical domain bounds when grid size changes.
+
+        Args:
+            x_min: Physical domain x minimum
+            x_max: Physical domain x maximum
+            y_min: Physical domain y minimum
+            y_max: Physical domain y maximum
+        """
+        self.domain_x_min = x_min
+        self.domain_x_max = x_max
+        self.domain_y_min = y_min
+        self.domain_y_max = y_max
+        # Clear markers since positions will be wrong with new bounds
+        self.force_clear_markers()
 
     def _update_boundary_lines(self, x_view_min, x_view_max, y_min, y_max):
         """
