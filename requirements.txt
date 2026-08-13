@@ -1,0 +1,23 @@
+# Python Dependencies
+
+# Install with: pip install -r requirements.txt
+
+# Core JAX dependencies
+jax>=0.9.0
+jaxlib>=0.9.0
+
+# Numerical computing
+numpy>=1.24.0
+
+# GUI and visualization
+pyqt6>=6.4.0
+pyqtgraph>=0.13.0
+matplotlib>=3.5.0
+PyOpenGL>=3.1.0
+
+# Freeform drawing
+pygame>=2.5.0
+scipy>=1.10.0
+
+# Airfoil analysis
+pyxfoil
